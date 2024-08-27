@@ -1,39 +1,75 @@
-// Copyright 2024 RISC Zero, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-// This application demonstrates how to send an off-chain proof request
-// to the Bonsai proving service and publish the received proofs directly
-// to your deployed app contract.
-
 use alloy_primitives::U256;
 use alloy_sol_types::{sol, SolInterface, SolValue};
 use anyhow::{Context, Result};
 use clap::Parser;
 use ethers::prelude::*;
 use methods::IS_EVEN_ELF;
+use num_bigint::BigUint;
 use risc0_ethereum_contracts::groth16;
 use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts, VerifierContext};
+use zk_kit_imt::imt::IMT;
+use fhe::bfv::{
+    BfvParameters, BfvParametersBuilder, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey,
+};
+use fhe_traits::{
+    DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter, Serialize,
+};
+use rand::thread_rng;
+use std::sync::Arc;
+use sha3::{Keccak256, Digest};
+use poseidon_rs::{Poseidon, Fr, FrRepr};
+use ff::*;
+use crate::hex;
 
-// `IEvenNumber` interface automatically generated via the alloy `sol!` macro.
+
+fn compute_provider() -> Vec<Vec<u8>> {
+    let params = create_params();
+    let (sk, pk) = generate_keys(&params);
+    let inputs = vec![1, 1, 0];
+    let ciphertexts = encrypt_inputs(&inputs, &pk, &params);
+    ciphertexts.iter().map(|c| c.to_bytes()).collect()
+}
+
+fn create_params() -> Arc<BfvParameters> {
+    BfvParametersBuilder::new()
+        .set_degree(1024)
+        .set_plaintext_modulus(65537)
+        .set_moduli(&[1152921504606584833])
+        .build_arc()
+        .expect("Failed to build parameters")
+}
+
+fn generate_keys(params: &Arc<BfvParameters>) -> (SecretKey, PublicKey) {
+    let mut rng = thread_rng();
+    let sk = SecretKey::random(params, &mut rng);
+    let pk = PublicKey::new(&sk, &mut rng);
+    (sk, pk)
+}
+
+fn encrypt_inputs(
+    inputs: &[u64],
+    pk: &PublicKey,
+    params: &Arc<BfvParameters>,
+) -> Vec<Ciphertext> {
+    let mut rng = thread_rng();
+    inputs
+        .iter()
+        .map(|&input| {
+            let pt = Plaintext::try_encode(&[input], Encoding::poly(), params)
+                .expect("Failed to encode plaintext");
+            pk.try_encrypt(&pt, &mut rng).expect("Failed to encrypt")
+        })
+        .collect()
+}
+
+
 sol! {
     interface IEvenNumber {
         function set(uint256 x, bytes calldata seal);
+        function insertLeaf(bytes memory input);
     }
 }
 
-/// Wrapper of a `SignerMiddleware` client to send transactions to the given
-/// contract's `Address`.
 pub struct TxSender {
     chain_id: u64,
     client: SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>,
@@ -93,9 +129,9 @@ struct Args {
     #[clap(long)]
     contract: String,
 
-    /// The input to provide to the guest binary
-    #[clap(short, long)]
-    input: U256,
+    // /// The input to provide to the guest binary
+    // #[clap(short, long)]
+    // input: U256,
 }
 
 fn main() -> Result<()> {
@@ -113,38 +149,56 @@ fn main() -> Result<()> {
 
     // ABI encode input: Before sending the proof request to the Bonsai proving service,
     // the input number is ABI-encoded to match the format expected by the guest code running in the zkVM.
-    let input = args.input.abi_encode();
+    // let input = args.input.abi_encode();
 
-    let env = ExecutorEnv::builder().write_slice(&input).build()?;
+    // let env = ExecutorEnv::builder().write_slice(&input).build()?;
 
-    let receipt = default_prover()
-        .prove_with_ctx(
-            env,
-            &VerifierContext::default(),
-            IS_EVEN_ELF,
-            &ProverOpts::groth16(),
-        )?
-        .receipt;
+    // let receipt = default_prover()
+    //     .prove_with_ctx(
+    //         env,
+    //         &VerifierContext::default(),
+    //         IS_EVEN_ELF,
+    //         &ProverOpts::groth16(),
+    //     )?
+    //     .receipt;
 
-    // Encode the seal with the selector.
-    let seal = groth16::encode(receipt.inner.groth16()?.seal.clone())?;
+    // // Encode the seal with the selector.
+    // let seal = groth16::encode(receipt.inner.groth16()?.seal.clone())?;
 
-    // Extract the journal from the receipt.
-    let journal = receipt.journal.bytes.clone();
+    // // Extract the journal from the receipt.
+    // let journal = receipt.journal.bytes.clone();
 
-    // Decode Journal: Upon receiving the proof, the application decodes the journal to extract
-    // the verified number. This ensures that the number being submitted to the blockchain matches
-    // the number that was verified off-chain.
-    let x = U256::abi_decode(&journal, true).context("decoding journal data")?;
+    // // Decode Journal: Upon receiving the proof, the application decodes the journal to extract
+    // // the verified number. This ensures that the number being submitted to the blockchain matches
+    // // the number that was verified off-chain.
+    // let x = U256::abi_decode(&journal, true).context("decoding journal data")?;
 
     // Construct function call: Using the IEvenNumber interface, the application constructs
     // the ABI-encoded function call for the set function of the EvenNumber contract.
     // This call includes the verified number, the post-state digest, and the seal (proof).
-    let calldata = IEvenNumber::IEvenNumberCalls::set(IEvenNumber::setCall {
-        x,
-        seal: seal.into(),
+    // let calldata = IEvenNumber::IEvenNumberCalls::set(IEvenNumber::setCall {
+    //     x,
+    //     seal: seal.into(),
+    // })
+    // .abi_encode();
+
+    // let bytes_ciphertexts = compute_provider();
+    // let mut hasher = Keccak256::new();
+    // for ciphertext in &bytes_ciphertexts {
+    //     hasher.update(ciphertext);
+    //     break;
+    // }
+    // let hash = hasher.finalize();
+    // let inputNum = BigUint::from_bytes_be(&hash) / 10u32;
+
+    let data: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+
+    let calldata = IEvenNumber::IEvenNumberCalls::insertLeaf(IEvenNumber::insertLeafCall {
+        input: data
     })
     .abi_encode();
+
+    println!("Calling fuction with calldata");
 
     // Initialize the async runtime environment to handle the transaction sending.
     let runtime = tokio::runtime::Runtime::new()?;

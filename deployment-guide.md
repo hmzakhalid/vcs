@@ -59,7 +59,7 @@ You can deploy your contracts and run an end-to-end test or demo as follows:
     Save the `EvenNumber` contract address to an env variable:
 
     ```bash
-    export EVEN_NUMBER_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    export EVEN_NUMBER_ADDRESS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
     ```
 
     > You can also use the following command to set the contract address if you have [`jq`][jq] installed:

@@ -1,99 +1,56 @@
+use crate::hex;
+use alloy_primitives::Keccak256;
+use ff::*;
+use num_bigint::BigUint;
+use num_traits::Num;
+use poseidon_rs::{Fr, Poseidon};
 use zk_kit_imt::imt::IMT;
-use fhe::bfv::{
-    BfvParameters, BfvParametersBuilder, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey,
-};
-use fhe_traits::{
-    DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter, Serialize,
-};
-use rand::thread_rng;
-use std::sync::Arc;
 
-fn compute_provider() -> Vec<Vec<u8>> {
-    let params = create_params();
-    let (sk, pk) = generate_keys(&params);
-    let inputs = vec![1, 1, 0];
-    let ciphertexts = encrypt_inputs(&inputs, &pk, &params);
-    ciphertexts.iter().map(|c| c.to_bytes()).collect()
-}
+pub fn posidon_hash_function(nodes: Vec<String>) -> String {
+    println!("Nodes: {:?}", nodes);
+    let pos = Poseidon::new();
+    let mut fr_elements = Vec::new();
+    for node in nodes {
+        let clean_node = node.trim_start_matches("0x");
+        let node_str = BigUint::from_str_radix(clean_node, 16).unwrap().to_string();
+        let fr = Fr::from_str(&node_str).unwrap();
+        fr_elements.push(fr);
+    }
 
-fn create_params() -> Arc<BfvParameters> {
-    BfvParametersBuilder::new()
-        .set_degree(1024)
-        .set_plaintext_modulus(65537)
-        .set_moduli(&[1152921504606584833])
-        .build_arc()
-        .expect("Failed to build parameters")
-}
-
-fn generate_keys(params: &Arc<BfvParameters>) -> (SecretKey, PublicKey) {
-    let mut rng = thread_rng();
-    let sk = SecretKey::random(params, &mut rng);
-    let pk = PublicKey::new(&sk, &mut rng);
-    (sk, pk)
-}
-
-fn encrypt_inputs(
-    inputs: &[u64],
-    pk: &PublicKey,
-    params: &Arc<BfvParameters>,
-) -> Vec<Ciphertext> {
-    let mut rng = thread_rng();
-    inputs
-        .iter()
-        .map(|&input| {
-            let pt = Plaintext::try_encode(&[input], Encoding::poly(), params)
-                .expect("Failed to encode plaintext");
-            pk.try_encrypt(&pt, &mut rng).expect("Failed to encrypt")
-        })
-        .collect()
-}
-
-
-fn hash_function(nodes: Vec<String>) -> String {
-    nodes.join("-")
+    let hash = pos.hash(fr_elements).unwrap();
+    hash.into_repr().to_string()
 }
 
 fn main() {
-    const ZERO: &str = "zero";
-    const DEPTH: usize = 3;
+    const ZERO: &str = "0";
+    const DEPTH: usize = 32;
     const ARITY: usize = 2;
 
-    /*
-     *  To create an instance of an IMT, you need to provide a hash function,
-     *  the depth of the tree, the zero value, the arity of the tree and an initial list of leaves.
-     */
-    let mut tree = IMT::new(hash_function, DEPTH, ZERO.to_string(), ARITY, vec![]).unwrap();
+    let mut tree = IMT::new(
+        posidon_hash_function,
+        DEPTH,
+        ZERO.to_string(),
+        ARITY,
+        vec![],
+    )
+    .unwrap();
 
-    // Insert (incrementally) a leaf with value "some-leaf"
-    tree.insert("some-leaf".to_string()).unwrap();
-    // Insert (incrementally) a leaf with value "another_leaf"
-    tree.insert("another_leaf".to_string()).unwrap();
+    let pos = Poseidon::new();
+    let data: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
 
+    let mut kek = Keccak256::new();
+    kek.update(&data);
+    let hex_data = hex::encode(kek.finalize());
+    let clean_data = hex_data.trim_start_matches("0x");
+    let val = BigUint::from_str_radix(clean_data, 16).unwrap().to_string();
+    let data_field = Fr::from_str(&val).unwrap();
+    let pad = Fr::from_str("0").unwrap();
+    let hash = pos.hash(vec![data_field, pad]).unwrap();
+    tree.insert(hash.into_repr().to_string()).unwrap();
     let root = tree.root().unwrap();
-    println!("imt tree root: {root}");
-    assert!(root == "some-leaf-another_leaf-zero-zero-zero-zero-zero-zero");
 
-    let depth = tree.depth();
-    println!("imt tree depth: {depth}");
-    assert!(depth == 3);
-
-    let arity = tree.arity();
-    println!("imt tree arity: {arity}");
-    assert!(arity == 2);
-
-    let leaves = tree.leaves();
-    println!("imt tree leaves: {:?}", leaves);
-    assert!(leaves == vec!["some-leaf", "another_leaf"]);
-
-    // Delete the leaf at index 0
-    assert!(tree.delete(0).is_ok());
-    let root = tree.root().unwrap();
-    println!("imt tree root: {root}");
-    assert!(root == "zero-another_leaf-zero-zero-zero-zero-zero-zero");
-
-    // Create a proof for the leaf at index 1
-    let proof = tree.create_proof(1);
-    assert!(proof.is_ok());
-    let proof = proof.unwrap();
-    assert!(tree.verify_proof(&proof));
+    println!("Root: {}", root);
 }
+
+// "0x173989c01a55a9290a17b36dad1412a0e03f55cad58de9ab21c44a6fdfeda2e0"
+// 19067983348140929614931157778076933155244721475585190732676631703400658318080
