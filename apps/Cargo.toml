@@ -9,6 +9,7 @@ alloy-sol-types = { workspace = true }
 alloy = { version = "0.2.1", features = [
     "full"
 ] }
+zk-kit-imt = "0.0.5"
 futures-util = "0.3"
 eyre = "0.6"
 serde = "1.0"
@@ -22,3 +23,6 @@ methods = { workspace = true }
 risc0-ethereum-contracts = { workspace = true }
 risc0-zkvm = { workspace = true, features = ["client"] }
 tokio = { version = "1.35", features = ["full"] }
+fhe = { git = "https://github.com/gnosisguild/fhe.rs", version = "0.1.0-beta.7" }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", version = "0.1.0-beta.7" }
+rand = "0.8"
