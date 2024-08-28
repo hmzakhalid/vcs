@@ -1,14 +1,16 @@
-use crate::hex;
 use alloy_primitives::Keccak256;
-use ff::*;
+use ark_bn254::Fr;
+use ark_ff::{BigInt, BigInteger};
+use hex;
+use light_poseidon::{Poseidon, PoseidonHasher};
 use num_bigint::BigUint;
 use num_traits::Num;
-use poseidon_rs::{Fr, Poseidon};
+use std::str::FromStr;
 use zk_kit_imt::imt::IMT;
 
 pub fn posidon_hash_function(nodes: Vec<String>) -> String {
     println!("Nodes: {:?}", nodes);
-    let pos = Poseidon::new();
+    let mut pos = Poseidon::<Fr>::new_circom(2).unwrap();
     let mut fr_elements = Vec::new();
     for node in nodes {
         let clean_node = node.trim_start_matches("0x");
@@ -17,8 +19,9 @@ pub fn posidon_hash_function(nodes: Vec<String>) -> String {
         fr_elements.push(fr);
     }
 
-    let hash = pos.hash(fr_elements).unwrap();
-    hash.into_repr().to_string()
+    let hash: BigInt<4> = pos.hash(&fr_elements).unwrap().into();
+    let bytes = hash.to_bytes_be();
+    hex::encode(bytes)
 }
 
 fn main() {
@@ -35,7 +38,7 @@ fn main() {
     )
     .unwrap();
 
-    let pos = Poseidon::new();
+    let mut pos = Poseidon::<Fr>::new_circom(2).unwrap();
     let data: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
 
     let mut kek = Keccak256::new();
@@ -45,8 +48,9 @@ fn main() {
     let val = BigUint::from_str_radix(clean_data, 16).unwrap().to_string();
     let data_field = Fr::from_str(&val).unwrap();
     let pad = Fr::from_str("0").unwrap();
-    let hash = pos.hash(vec![data_field, pad]).unwrap();
-    tree.insert(hash.into_repr().to_string()).unwrap();
+    let hash: BigInt<4> = pos.hash(&[data_field, pad]).unwrap().into();
+    let hash = hex::encode(hash.to_bytes_be());
+    tree.insert(hash).unwrap();
     let root = tree.root().unwrap();
 
     println!("Root: {}", root);
