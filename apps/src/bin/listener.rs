@@ -1,61 +1,55 @@
 use alloy::{
-    primitives::{address, U256, B256},
-    providers::{Provider, ProviderBuilder, RootProvider, WsConnect},
-    pubsub::PubSubFrontend,
+    primitives::{address, Address, B256},
+    providers::{Provider, ProviderBuilder, RootProvider},
     rpc::types::{BlockNumberOrTag, Filter, Log},
-    sol,
-    sol_types::SolEvent,
+    sol, sol_types::SolEvent, transports::BoxTransport,
 };
 use eyre::Result;
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::fmt::Debug;
 
-sol!(
-    #[allow(missing_docs)]
-    #[sol(rpc)]
-    EvenNumber,
-    "out/EvenNumber.sol/EvenNumber.json"
-);
-
-pub trait BlockchainEvent: Sized + Send + Sync + 'static {
-    fn decode(log: Log) -> Result<Self>;
+pub trait BlockchainEvent: Send + Sync + 'static {
     fn process(&self) -> Result<()>;
 }
 
-// The generic BlockchainEventListener.
+impl<T> BlockchainEvent for T
+where
+    T: SolEvent + Debug + Send + Sync + 'static,
+{
+    fn process(&self) -> Result<()> {
+        println!("Default processing: {:?}", self);
+        Ok(())
+    }
+}
+
 pub struct BlockchainEventListener {
-    provider: RootProvider<PubSubFrontend>,
+    provider: Arc<RootProvider<BoxTransport>>,
     filter: Filter,
-    handlers: HashMap<B256, Arc<dyn Fn(Log) + Send + Sync>>,
+    decoders: HashMap<B256, Arc<dyn Fn(Log) -> Result<Box<dyn BlockchainEvent>> + Send + Sync>>,
 }
 
 impl BlockchainEventListener {
-    pub async fn new(rpc_url: &str, filter: Filter) -> Result<Self> {
-        let ws = WsConnect::new(rpc_url);
-        let provider = ProviderBuilder::new().on_ws(ws).await?;
-        Ok(Self {
+    pub fn new(provider: Arc<RootProvider<BoxTransport>>, filter: Filter) -> Self {
+        Self {
             provider,
             filter,
-            handlers: HashMap::new(),
-        })
+            decoders: HashMap::new(),
+        }
     }
 
-    pub fn add_event_handler<E>(&mut self, signature_hash: B256)
+    pub fn add_event_handler<E>(&mut self)
     where
-        E: BlockchainEvent,
+        E: SolEvent + BlockchainEvent + 'static,
     {
-        let handler = Arc::new(move |log: Log| {
-            if let Ok(event) = E::decode(log) {
-                if let Err(err) = event.process() {
-                    eprintln!("Error processing event: {:?}", err);
-                }
-            } else {
-                eprintln!("Failed to decode event");
-            }
+        let signature_hash = E::SIGNATURE_HASH;
+        let decoder = Arc::new(move |log: Log| -> Result<Box<dyn BlockchainEvent>> {
+            let event = log.log_decode::<E>()?.inner.data;
+            Ok(Box::new(event))
         });
 
-        self.handlers.insert(signature_hash, handler);
+        self.decoders.insert(signature_hash, decoder);
     }
 
     pub async fn listen(&self) -> Result<()> {
@@ -64,8 +58,19 @@ impl BlockchainEventListener {
 
         while let Some(log) = stream.next().await {
             if let Some(topic0) = log.topic0() {
-                if let Some(handler) = self.handlers.get(topic0) {
-                    handler(log.clone());
+                if let Some(decoder) = self.decoders.get(topic0) {
+                    match decoder(log.clone()) {
+                        Ok(event) => {
+                            if let Err(err) = event.process() {
+                                eprintln!("Error processing event: {:?}", err);
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("Error decoding log: {:?}", err);
+                        }
+                    }
+                } else {
+                    eprintln!("No handler found for topic: {:?}", topic0);
                 }
             }
         }
@@ -74,43 +79,47 @@ impl BlockchainEventListener {
     }
 }
 
-pub struct TestingEvent {
-    pub e3Id: U256,
-    pub input: Vec<u8>,
+pub struct EthManager {
+    provider: Arc<RootProvider<BoxTransport>>,
 }
 
-impl BlockchainEvent for TestingEvent {
-    fn decode(log: Log) -> Result<Self> {
-        let EvenNumber::Testing { e3Id , input} = log.log_decode().unwrap().inner.data;
-        Ok(TestingEvent { e3Id, input: input.to_vec() })
+impl EthManager {
+    pub async fn new(rpc_url: &str) -> Result<Self> {
+        let provider = ProviderBuilder::new().on_builtin(rpc_url).await?;
+        Ok(Self {
+            provider: Arc::new(provider),
+        })
     }
 
-    fn process(&self) -> Result<()> {
-        println!("Processing TestingEvent with e3Id = {}", self.e3Id);
-        println!("Processing TestingEvent with Input = {:?}", self.input);
-        Ok(())
+    pub fn add_contract_listener(&self, contract_address: Address) -> BlockchainEventListener {
+        let filter = Filter::new()
+            .address(contract_address)
+            .from_block(BlockNumberOrTag::Latest);
+
+        BlockchainEventListener::new(self.provider.clone(), filter)
     }
+}
+
+sol! {
+    #[derive(Debug)]
+    event TestingEvent(uint256 e3Id, bytes input);
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Set up the WS transport which is consumed by the RPC client.
     let rpc_url = "ws://127.0.0.1:8545";
 
-    // Create a filter to watch for all EvenNumber contract events.
-    let even_number_address = address!("e7f1725E7734CE288F8367e1Bb143E90bb3F0512");
-    let filter = Filter::new()
-        .address(even_number_address)
-        .from_block(BlockNumberOrTag::Latest);
+    let eth_manager = EthManager::new(rpc_url).await?;
 
-    // Create the event listener.
-    let mut listener = BlockchainEventListener::new(rpc_url, filter).await?;
+    let contract_address1 = address!("e7f1725E7734CE288F8367e1Bb143E90bb3F0512");
+    let mut listener1 = eth_manager.add_contract_listener(contract_address1);
+    listener1.add_event_handler::<TestingEvent>();
 
-    // Register the event handler for the `Testing(uint256)` event.
-    listener.add_event_handler::<TestingEvent>(EvenNumber::Testing::SIGNATURE_HASH);
+    let contract_address2 = address!("5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+    let mut listener2 = eth_manager.add_contract_listener(contract_address2);
+    listener2.add_event_handler::<TestingEvent>();
 
-    // Start listening for events.
-    listener.listen().await?;
+    tokio::try_join!(listener1.listen(), listener2.listen())?;
 
     Ok(())
 }

@@ -1,211 +1,215 @@
-use alloy_primitives::U256;
-use alloy_sol_types::{sol, SolInterface, SolValue};
-use anyhow::{Context, Result};
-use clap::Parser;
-use ethers::prelude::*;
-use methods::IS_EVEN_ELF;
-use num_bigint::BigUint;
-use risc0_ethereum_contracts::groth16;
-use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts, VerifierContext};
-use zk_kit_imt::imt::IMT;
-use fhe::bfv::{
-    BfvParameters, BfvParametersBuilder, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey,
-};
-use fhe_traits::{
-    DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter, Serialize,
-};
-use rand::thread_rng;
-use std::sync::Arc;
-use sha3::{Keccak256, Digest};
-use poseidon_rs::{Poseidon, Fr, FrRepr};
-use ff::*;
-use crate::hex;
-
-
-fn compute_provider() -> Vec<Vec<u8>> {
-    let params = create_params();
-    let (sk, pk) = generate_keys(&params);
-    let inputs = vec![1, 1, 0];
-    let ciphertexts = encrypt_inputs(&inputs, &pk, &params);
-    ciphertexts.iter().map(|c| c.to_bytes()).collect()
+fn main() {
+    println!("Hello, world!");
 }
 
-fn create_params() -> Arc<BfvParameters> {
-    BfvParametersBuilder::new()
-        .set_degree(1024)
-        .set_plaintext_modulus(65537)
-        .set_moduli(&[1152921504606584833])
-        .build_arc()
-        .expect("Failed to build parameters")
-}
-
-fn generate_keys(params: &Arc<BfvParameters>) -> (SecretKey, PublicKey) {
-    let mut rng = thread_rng();
-    let sk = SecretKey::random(params, &mut rng);
-    let pk = PublicKey::new(&sk, &mut rng);
-    (sk, pk)
-}
-
-fn encrypt_inputs(
-    inputs: &[u64],
-    pk: &PublicKey,
-    params: &Arc<BfvParameters>,
-) -> Vec<Ciphertext> {
-    let mut rng = thread_rng();
-    inputs
-        .iter()
-        .map(|&input| {
-            let pt = Plaintext::try_encode(&[input], Encoding::poly(), params)
-                .expect("Failed to encode plaintext");
-            pk.try_encrypt(&pt, &mut rng).expect("Failed to encrypt")
-        })
-        .collect()
-}
+// use alloy_primitives::U256;
+// use alloy_sol_types::{sol, SolInterface, SolValue};
+// use anyhow::{Context, Result};
+// use clap::Parser;
+// use ethers::prelude::*;
+// use methods::IS_EVEN_ELF;
+// use num_bigint::BigUint;
+// use risc0_ethereum_contracts::groth16;
+// use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts, VerifierContext};
+// use zk_kit_imt::imt::IMT;
+// use fhe::bfv::{
+//     BfvParameters, BfvParametersBuilder, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey,
+// };
+// use fhe_traits::{
+//     DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter, Serialize,
+// };
+// use rand::thread_rng;
+// use std::sync::Arc;
+// use sha3::{Keccak256, Digest};
+// use poseidon_rs::{Poseidon, Fr, FrRepr};
+// use ff::*;
+// use crate::hex;
 
 
-sol! {
-    interface IEvenNumber {
-        function set(uint256 x, bytes calldata seal);
-        function insertLeaf(bytes memory input);
-    }
-}
+// fn compute_provider() -> Vec<Vec<u8>> {
+//     let params = create_params();
+//     let (sk, pk) = generate_keys(&params);
+//     let inputs = vec![1, 1, 0];
+//     let ciphertexts = encrypt_inputs(&inputs, &pk, &params);
+//     ciphertexts.iter().map(|c| c.to_bytes()).collect()
+// }
 
-pub struct TxSender {
-    chain_id: u64,
-    client: SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>,
-    contract: Address,
-}
+// fn create_params() -> Arc<BfvParameters> {
+//     BfvParametersBuilder::new()
+//         .set_degree(1024)
+//         .set_plaintext_modulus(65537)
+//         .set_moduli(&[1152921504606584833])
+//         .build_arc()
+//         .expect("Failed to build parameters")
+// }
 
-impl TxSender {
-    /// Creates a new `TxSender`.
-    pub fn new(chain_id: u64, rpc_url: &str, private_key: &str, contract: &str) -> Result<Self> {
-        let provider = Provider::<Http>::try_from(rpc_url)?;
-        let wallet: LocalWallet = private_key.parse::<LocalWallet>()?.with_chain_id(chain_id);
-        let client = SignerMiddleware::new(provider.clone(), wallet.clone());
-        let contract = contract.parse::<Address>()?;
+// fn generate_keys(params: &Arc<BfvParameters>) -> (SecretKey, PublicKey) {
+//     let mut rng = thread_rng();
+//     let sk = SecretKey::random(params, &mut rng);
+//     let pk = PublicKey::new(&sk, &mut rng);
+//     (sk, pk)
+// }
 
-        Ok(TxSender {
-            chain_id,
-            client,
-            contract,
-        })
-    }
+// fn encrypt_inputs(
+//     inputs: &[u64],
+//     pk: &PublicKey,
+//     params: &Arc<BfvParameters>,
+// ) -> Vec<Ciphertext> {
+//     let mut rng = thread_rng();
+//     inputs
+//         .iter()
+//         .map(|&input| {
+//             let pt = Plaintext::try_encode(&[input], Encoding::poly(), params)
+//                 .expect("Failed to encode plaintext");
+//             pk.try_encrypt(&pt, &mut rng).expect("Failed to encrypt")
+//         })
+//         .collect()
+// }
 
-    /// Send a transaction with the given calldata.
-    pub async fn send(&self, calldata: Vec<u8>) -> Result<Option<TransactionReceipt>> {
-        let tx = TransactionRequest::new()
-            .chain_id(self.chain_id)
-            .to(self.contract)
-            .from(self.client.address())
-            .data(calldata);
 
-        log::info!("Transaction request: {:?}", &tx);
+// sol! {
+//     interface IEvenNumber {
+//         function set(uint256 x, bytes calldata seal);
+//         function insertLeaf(bytes memory input);
+//     }
+// }
 
-        let tx = self.client.send_transaction(tx, None).await?.await?;
+// pub struct TxSender {
+//     chain_id: u64,
+//     client: SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>,
+//     contract: Address,
+// }
 
-        log::info!("Transaction receipt: {:?}", &tx);
+// impl TxSender {
+//     /// Creates a new `TxSender`.
+//     pub fn new(chain_id: u64, rpc_url: &str, private_key: &str, contract: &str) -> Result<Self> {
+//         let provider = Provider::<Http>::try_from(rpc_url)?;
+//         let wallet: LocalWallet = private_key.parse::<LocalWallet>()?.with_chain_id(chain_id);
+//         let client = SignerMiddleware::new(provider.clone(), wallet.clone());
+//         let contract = contract.parse::<Address>()?;
 
-        Ok(tx)
-    }
-}
+//         Ok(TxSender {
+//             chain_id,
+//             client,
+//             contract,
+//         })
+//     }
 
-/// Arguments of the publisher CLI.
-#[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
-struct Args {
-    /// Ethereum chain ID
-    #[clap(long)]
-    chain_id: u64,
+//     /// Send a transaction with the given calldata.
+//     pub async fn send(&self, calldata: Vec<u8>) -> Result<Option<TransactionReceipt>> {
+//         let tx = TransactionRequest::new()
+//             .chain_id(self.chain_id)
+//             .to(self.contract)
+//             .from(self.client.address())
+//             .data(calldata);
 
-    /// Ethereum Node endpoint.
-    #[clap(long, env)]
-    eth_wallet_private_key: String,
+//         log::info!("Transaction request: {:?}", &tx);
 
-    /// Ethereum Node endpoint.
-    #[clap(long)]
-    rpc_url: String,
+//         let tx = self.client.send_transaction(tx, None).await?.await?;
 
-    /// Application's contract address on Ethereum
-    #[clap(long)]
-    contract: String,
+//         log::info!("Transaction receipt: {:?}", &tx);
 
-    // /// The input to provide to the guest binary
-    // #[clap(short, long)]
-    // input: U256,
-}
+//         Ok(tx)
+//     }
+// }
 
-fn main() -> Result<()> {
-    env_logger::init();
-    // Parse CLI Arguments: The application starts by parsing command-line arguments provided by the user.
-    let args = Args::parse();
+// /// Arguments of the publisher CLI.
+// #[derive(Parser, Debug)]
+// #[clap(author, version, about, long_about = None)]
+// struct Args {
+//     /// Ethereum chain ID
+//     #[clap(long)]
+//     chain_id: u64,
 
-    // Create a new transaction sender using the parsed arguments.
-    let tx_sender = TxSender::new(
-        args.chain_id,
-        &args.rpc_url,
-        &args.eth_wallet_private_key,
-        &args.contract,
-    )?;
+//     /// Ethereum Node endpoint.
+//     #[clap(long, env)]
+//     eth_wallet_private_key: String,
 
-    // ABI encode input: Before sending the proof request to the Bonsai proving service,
-    // the input number is ABI-encoded to match the format expected by the guest code running in the zkVM.
-    // let input = args.input.abi_encode();
+//     /// Ethereum Node endpoint.
+//     #[clap(long)]
+//     rpc_url: String,
 
-    // let env = ExecutorEnv::builder().write_slice(&input).build()?;
+//     /// Application's contract address on Ethereum
+//     #[clap(long)]
+//     contract: String,
 
-    // let receipt = default_prover()
-    //     .prove_with_ctx(
-    //         env,
-    //         &VerifierContext::default(),
-    //         IS_EVEN_ELF,
-    //         &ProverOpts::groth16(),
-    //     )?
-    //     .receipt;
+//     // /// The input to provide to the guest binary
+//     // #[clap(short, long)]
+//     // input: U256,
+// }
 
-    // // Encode the seal with the selector.
-    // let seal = groth16::encode(receipt.inner.groth16()?.seal.clone())?;
+// fn main() -> Result<()> {
+//     env_logger::init();
+//     // Parse CLI Arguments: The application starts by parsing command-line arguments provided by the user.
+//     let args = Args::parse();
 
-    // // Extract the journal from the receipt.
-    // let journal = receipt.journal.bytes.clone();
+//     // Create a new transaction sender using the parsed arguments.
+//     let tx_sender = TxSender::new(
+//         args.chain_id,
+//         &args.rpc_url,
+//         &args.eth_wallet_private_key,
+//         &args.contract,
+//     )?;
 
-    // // Decode Journal: Upon receiving the proof, the application decodes the journal to extract
-    // // the verified number. This ensures that the number being submitted to the blockchain matches
-    // // the number that was verified off-chain.
-    // let x = U256::abi_decode(&journal, true).context("decoding journal data")?;
+//     // ABI encode input: Before sending the proof request to the Bonsai proving service,
+//     // the input number is ABI-encoded to match the format expected by the guest code running in the zkVM.
+//     // let input = args.input.abi_encode();
 
-    // Construct function call: Using the IEvenNumber interface, the application constructs
-    // the ABI-encoded function call for the set function of the EvenNumber contract.
-    // This call includes the verified number, the post-state digest, and the seal (proof).
-    // let calldata = IEvenNumber::IEvenNumberCalls::set(IEvenNumber::setCall {
-    //     x,
-    //     seal: seal.into(),
-    // })
-    // .abi_encode();
+//     // let env = ExecutorEnv::builder().write_slice(&input).build()?;
 
-    // let bytes_ciphertexts = compute_provider();
-    // let mut hasher = Keccak256::new();
-    // for ciphertext in &bytes_ciphertexts {
-    //     hasher.update(ciphertext);
-    //     break;
-    // }
-    // let hash = hasher.finalize();
-    // let inputNum = BigUint::from_bytes_be(&hash) / 10u32;
+//     // let receipt = default_prover()
+//     //     .prove_with_ctx(
+//     //         env,
+//     //         &VerifierContext::default(),
+//     //         IS_EVEN_ELF,
+//     //         &ProverOpts::groth16(),
+//     //     )?
+//     //     .receipt;
 
-    let data: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+//     // // Encode the seal with the selector.
+//     // let seal = groth16::encode(receipt.inner.groth16()?.seal.clone())?;
 
-    let calldata = IEvenNumber::IEvenNumberCalls::insertLeaf(IEvenNumber::insertLeafCall {
-        input: data
-    })
-    .abi_encode();
+//     // // Extract the journal from the receipt.
+//     // let journal = receipt.journal.bytes.clone();
 
-    println!("Calling fuction with calldata");
+//     // // Decode Journal: Upon receiving the proof, the application decodes the journal to extract
+//     // // the verified number. This ensures that the number being submitted to the blockchain matches
+//     // // the number that was verified off-chain.
+//     // let x = U256::abi_decode(&journal, true).context("decoding journal data")?;
 
-    // Initialize the async runtime environment to handle the transaction sending.
-    let runtime = tokio::runtime::Runtime::new()?;
+//     // Construct function call: Using the IEvenNumber interface, the application constructs
+//     // the ABI-encoded function call for the set function of the EvenNumber contract.
+//     // This call includes the verified number, the post-state digest, and the seal (proof).
+//     // let calldata = IEvenNumber::IEvenNumberCalls::set(IEvenNumber::setCall {
+//     //     x,
+//     //     seal: seal.into(),
+//     // })
+//     // .abi_encode();
 
-    // Send transaction: Finally, the TxSender component sends the transaction to the Ethereum blockchain,
-    // effectively calling the set function of the EvenNumber contract with the verified number and proof.
-    runtime.block_on(tx_sender.send(calldata))?;
+//     // let bytes_ciphertexts = compute_provider();
+//     // let mut hasher = Keccak256::new();
+//     // for ciphertext in &bytes_ciphertexts {
+//     //     hasher.update(ciphertext);
+//     //     break;
+//     // }
+//     // let hash = hasher.finalize();
+//     // let inputNum = BigUint::from_bytes_be(&hash) / 10u32;
 
-    Ok(())
-}
+//     let data: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+
+//     let calldata = IEvenNumber::IEvenNumberCalls::insertLeaf(IEvenNumber::insertLeafCall {
+//         input: data
+//     })
+//     .abi_encode();
+
+//     println!("Calling fuction with calldata");
+
+//     // Initialize the async runtime environment to handle the transaction sending.
+//     let runtime = tokio::runtime::Runtime::new()?;
+
+//     // Send transaction: Finally, the TxSender component sends the transaction to the Ethereum blockchain,
+//     // effectively calling the set function of the EvenNumber contract with the verified number and proof.
+//     runtime.block_on(tx_sender.send(calldata))?;
+
+//     Ok(())
+// }
