@@ -10,46 +10,46 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::fmt::Debug;
 
-pub trait BlockchainEvent: Send + Sync + 'static {
+pub trait ContractEvent: Send + Sync + 'static {
     fn process(&self) -> Result<()>;
 }
 
-impl<T> BlockchainEvent for T
+impl<T> ContractEvent for T
 where
     T: SolEvent + Debug + Send + Sync + 'static,
 {
     fn process(&self) -> Result<()> {
-        println!("Default processing: {:?}", self);
+        println!("Processing event: {:?}", self);
         Ok(())
     }
 }
 
-pub struct BlockchainEventListener {
+pub struct EventListener {
     provider: Arc<RootProvider<BoxTransport>>,
     filter: Filter,
-    decoders: HashMap<B256, Arc<dyn Fn(Log) -> Result<Box<dyn BlockchainEvent>> + Send + Sync>>,
+    handlers: HashMap<B256, Arc<dyn Fn(Log) -> Result<Box<dyn ContractEvent>> + Send + Sync>>,
 }
 
-impl BlockchainEventListener {
+impl EventListener {
     pub fn new(provider: Arc<RootProvider<BoxTransport>>, filter: Filter) -> Self {
         Self {
             provider,
             filter,
-            decoders: HashMap::new(),
+            handlers: HashMap::new(),
         }
     }
 
     pub fn add_event_handler<E>(&mut self)
     where
-        E: SolEvent + BlockchainEvent + 'static,
+        E: SolEvent + ContractEvent + 'static,
     {
-        let signature_hash = E::SIGNATURE_HASH;
-        let decoder = Arc::new(move |log: Log| -> Result<Box<dyn BlockchainEvent>> {
+        let signature = E::SIGNATURE_HASH;
+        let handler = Arc::new(move |log: Log| -> Result<Box<dyn ContractEvent>> {
             let event = log.log_decode::<E>()?.inner.data;
             Ok(Box::new(event))
         });
 
-        self.decoders.insert(signature_hash, decoder);
+        self.handlers.insert(signature, handler);
     }
 
     pub async fn listen(&self) -> Result<()> {
@@ -57,9 +57,9 @@ impl BlockchainEventListener {
         let mut stream = sub.into_stream();
 
         while let Some(log) = stream.next().await {
-            if let Some(topic0) = log.topic0() {
-                if let Some(decoder) = self.decoders.get(topic0) {
-                    match decoder(log.clone()) {
+            if let Some(topic) = log.topic0() {
+                if let Some(handler) = self.handlers.get(topic) {
+                    match handler(log.clone()) {
                         Ok(event) => {
                             if let Err(err) = event.process() {
                                 eprintln!("Error processing event: {:?}", err);
@@ -70,7 +70,7 @@ impl BlockchainEventListener {
                         }
                     }
                 } else {
-                    eprintln!("No handler found for topic: {:?}", topic0);
+                    eprintln!("No handler found for topic: {:?}", topic);
                 }
             }
         }
@@ -79,11 +79,11 @@ impl BlockchainEventListener {
     }
 }
 
-pub struct EthManager {
+pub struct ContractManager {
     provider: Arc<RootProvider<BoxTransport>>,
 }
 
-impl EthManager {
+impl ContractManager {
     pub async fn new(rpc_url: &str) -> Result<Self> {
         let provider = ProviderBuilder::new().on_builtin(rpc_url).await?;
         Ok(Self {
@@ -91,12 +91,12 @@ impl EthManager {
         })
     }
 
-    pub fn add_contract_listener(&self, contract_address: Address) -> BlockchainEventListener {
+    pub fn add_listener(&self, contract_address: Address) -> EventListener {
         let filter = Filter::new()
             .address(contract_address)
             .from_block(BlockNumberOrTag::Latest);
 
-        BlockchainEventListener::new(self.provider.clone(), filter)
+        EventListener::new(self.provider.clone(), filter)
     }
 }
 
@@ -109,14 +109,14 @@ sol! {
 async fn main() -> Result<()> {
     let rpc_url = "ws://127.0.0.1:8545";
 
-    let eth_manager = EthManager::new(rpc_url).await?;
+    let manager = ContractManager::new(rpc_url).await?;
 
-    let contract_address1 = address!("e7f1725E7734CE288F8367e1Bb143E90bb3F0512");
-    let mut listener1 = eth_manager.add_contract_listener(contract_address1);
+    let address1 = address!("e7f1725E7734CE288F8367e1Bb143E90bb3F0512");
+    let mut listener1 = manager.add_listener(address1);
     listener1.add_event_handler::<TestingEvent>();
 
-    let contract_address2 = address!("5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
-    let mut listener2 = eth_manager.add_contract_listener(contract_address2);
+    let address2 = address!("5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+    let mut listener2 = manager.add_listener(address2);
     listener2.add_event_handler::<TestingEvent>();
 
     tokio::try_join!(listener1.listen(), listener2.listen())?;
