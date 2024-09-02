@@ -7,7 +7,7 @@ edition = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy = { version = "0.2.1", features = ["full"] }
-zk-kit-imt = "0.0.5"
+zk-kit-imt = {path = "../../imt-rs/crates/imt"}
 futures-util = "0.3"
 eyre = "0.6"
 serde = "1.0"

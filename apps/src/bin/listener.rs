@@ -2,13 +2,15 @@ use alloy::{
     primitives::{address, Address, B256},
     providers::{Provider, ProviderBuilder, RootProvider},
     rpc::types::{BlockNumberOrTag, Filter, Log},
-    sol, sol_types::SolEvent, transports::BoxTransport,
+    sol,
+    sol_types::SolEvent,
+    transports::BoxTransport,
 };
 use eyre::Result;
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 pub trait ContractEvent: Send + Sync + 'static {
     fn process(&self) -> Result<()>;
@@ -53,24 +55,17 @@ impl EventListener {
     }
 
     pub async fn listen(&self) -> Result<()> {
-        let sub = self.provider.subscribe_logs(&self.filter).await?;
-        let mut stream = sub.into_stream();
-
+        let mut stream = self
+            .provider
+            .subscribe_logs(&self.filter)
+            .await?
+            .into_stream();
         while let Some(log) = stream.next().await {
-            if let Some(topic) = log.topic0() {
-                if let Some(handler) = self.handlers.get(topic) {
-                    match handler(log.clone()) {
-                        Ok(event) => {
-                            if let Err(err) = event.process() {
-                                eprintln!("Error processing event: {:?}", err);
-                            }
-                        }
-                        Err(err) => {
-                            eprintln!("Error decoding log: {:?}", err);
-                        }
+            if let Some(topic0) = log.topic0() {
+                if let Some(decoder) = self.handlers.get(topic0) {
+                    if let Ok(event) = decoder(log.clone()) {
+                        event.process()?;
                     }
-                } else {
-                    eprintln!("No handler found for topic: {:?}", topic);
                 }
             }
         }

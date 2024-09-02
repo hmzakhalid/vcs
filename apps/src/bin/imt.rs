@@ -6,9 +6,10 @@ use light_poseidon::{Poseidon, PoseidonHasher};
 use num_bigint::BigUint;
 use num_traits::Num;
 use std::str::FromStr;
-use zk_kit_imt::imt::IMT;
+use std::thread;
+use zk_kit_imt::imt::{IMTNode, IMT};
 
-pub fn posidon_hash_function(nodes: Vec<String>) -> String {
+pub fn posidon_hash_function(nodes: Vec<IMTNode>) -> IMTNode {
     println!("Nodes: {:?}", nodes);
     let mut pos = Poseidon::<Fr>::new_circom(2).unwrap();
     let mut fr_elements = Vec::new();
@@ -24,37 +25,94 @@ pub fn posidon_hash_function(nodes: Vec<String>) -> String {
     hex::encode(bytes)
 }
 
-fn main() {
-    const ZERO: &str = "0";
-    const DEPTH: usize = 32;
-    const ARITY: usize = 2;
+fn print_imt_nodes(tree: &IMT) {
+    println!("IMT Nodes:");
+    for (level, nodes) in tree.nodes.iter().enumerate() {
+        println!("Level {}:", level);
+        for chunk in nodes.chunks(2) {
+            match chunk.len() {
+                2 => println!("  {:?}, {:?}", chunk[0], chunk[1]),
+                1 => println!("  {:?}", chunk[0]),
+                _ => (),
+            }
+        }
+    }
+}
 
-    let mut tree = IMT::new(
-        posidon_hash_function,
-        DEPTH,
-        ZERO.to_string(),
-        ARITY,
-        vec![],
-    )
-    .unwrap();
-
-    let mut pos = Poseidon::<Fr>::new_circom(2).unwrap();
-    let data: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
-
+fn build_merkle_leaf(data: usize) -> String {
     let mut kek = Keccak256::new();
-    kek.update(&data);
+    kek.update(&[data as u8]);
     let hex_data = hex::encode(kek.finalize());
     let clean_data = hex_data.trim_start_matches("0x");
     let val = BigUint::from_str_radix(clean_data, 16).unwrap().to_string();
     let data_field = Fr::from_str(&val).unwrap();
     let pad = Fr::from_str("0").unwrap();
+    let mut pos = Poseidon::<Fr>::new_circom(2).unwrap();
     let hash: BigInt<4> = pos.hash(&[data_field, pad]).unwrap().into();
-    let hash = hex::encode(hash.to_bytes_be());
-    tree.insert(hash).unwrap();
-    let root = tree.root().unwrap();
-
-    println!("Root: {}", root);
+    hex::encode(hash.to_bytes_be())
 }
 
-// "0x173989c01a55a9290a17b36dad1412a0e03f55cad58de9ab21c44a6fdfeda2e0"
-// 19067983348140929614931157778076933155244721475585190732676631703400658318080
+fn build_merkle_tree(data: Vec<IMTNode>, depth: usize, zero: String) -> IMT {
+    const ARITY: usize = 2;
+
+    let tree = IMT::new(posidon_hash_function, depth, zero, ARITY, data).unwrap();
+    print_imt_nodes(&tree);
+    tree
+}
+
+fn build_merkle_tree_parallel(data: Vec<IMTNode>, batch_size: usize, full_depth: usize) -> IMTNode {
+    let chunks: Vec<Vec<IMTNode>> = data
+        .chunks(batch_size)
+        .map(|chunk| chunk.to_vec())
+        .collect();
+    let parallel_tree_depth = (batch_size as f64).log2().ceil() as usize;
+    let mut handles = vec![];
+
+    for chunk in chunks {
+        let handle = thread::spawn(move || {
+            let mut tree = build_merkle_tree(chunk, parallel_tree_depth, "0".to_string());
+            tree.root().unwrap()
+        });
+        handles.push(handle);
+    }
+
+    let mut roots = vec![];
+
+    for handle in handles {
+        let root = handle.join().unwrap();
+        println!("Batch Root: {}", root);
+        roots.push(root);
+    }
+
+    // Calculate the final tree depth depending on the number elements in the batch: full_depth - log2(batch_size)
+    let final_depth = full_depth - (batch_size as f64).log2().ceil() as usize;
+
+    // Get the correct zero node from the IMT tree's zeroes
+    // The zero node at the parallel_tree_depth is the one we want because we have already built the tree up to that depth
+    let temp_tree = build_merkle_tree(vec![], full_depth, "0".to_string());
+    let zero_node = temp_tree.zeroes[parallel_tree_depth].clone();
+
+    let mut final_tree = build_merkle_tree(roots, final_depth, zero_node);
+    final_tree.root().unwrap()
+}
+
+fn main() {
+    let data: Vec<String> = (1..=16).map(|i| build_merkle_leaf(i)).collect();
+    let full_depth = 4;
+
+    println!("Building Sequential Merkle Tree...");
+    let mut seq_tree = build_merkle_tree(data.clone(), full_depth, "0".to_string());
+    let sequential_root = seq_tree.root().unwrap();
+    println!("Sequential Root: {}", sequential_root);
+
+    println!("Building Parallel Merkle Tree...");
+    // Note: The batch size must be a power of 2
+    let parallel_root = build_merkle_tree_parallel(data, 4, full_depth);
+    println!("Parallel Root: {}", parallel_root);
+
+    if sequential_root == parallel_root {
+        println!("The roots match!");
+    } else {
+        println!("The roots do not match.");
+    }
+}
