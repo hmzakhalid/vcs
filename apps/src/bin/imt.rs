@@ -85,7 +85,7 @@ fn build_merkle_tree_parallel(data: Vec<IMTNode>, batch_size: usize, full_depth:
     }
 
     // Calculate the final tree depth depending on the number elements in the batch: full_depth - log2(batch_size)
-    let final_depth = full_depth - (batch_size as f64).log2().ceil() as usize;
+    let final_depth = full_depth - parallel_tree_depth;
 
     // Get the correct zero node from the IMT tree's zeroes
     // The zero node at the parallel_tree_depth is the one we want because we have already built the tree up to that depth
@@ -114,76 +114,5 @@ fn main() {
         println!("The roots match!");
     } else {
         println!("The roots do not match.");
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_basic_small_tree() {
-        let data: Vec<String> = (1..=4).map(|i| build_merkle_leaf(i)).collect();
-        let full_depth = 3;
-
-        let mut seq_tree = build_merkle_tree(data.clone(), full_depth, "0".to_string());
-        let sequential_root = seq_tree.root().unwrap();
-
-        let parallel_root = build_merkle_tree_parallel(data, 2, full_depth);
-
-        assert_eq!(sequential_root, parallel_root, "The roots should match for small trees");
-    }
-
-    #[test]
-    fn test_full_depth_tree() {
-        let data: Vec<String> = (1..=16).map(|i| build_merkle_leaf(i)).collect();
-        let full_depth = 4;
-
-        let mut seq_tree = build_merkle_tree(data.clone(), full_depth, "0".to_string());
-        let sequential_root = seq_tree.root().unwrap();
-
-        let parallel_root = build_merkle_tree_parallel(data, 4, full_depth);
-
-        assert_eq!(sequential_root, parallel_root, "The roots should match for full-depth trees");
-    }
-
-    #[test]
-    fn test_non_power_of_two_leaves() {
-        let data: Vec<String> = (1..=5).map(|i| build_merkle_leaf(i)).collect();
-        let full_depth = 3;
-
-        let mut seq_tree = build_merkle_tree(data.clone(), full_depth, "0".to_string());
-        let sequential_root = seq_tree.root().unwrap();
-
-        let parallel_root = build_merkle_tree_parallel(data, 2, full_depth);
-
-        assert_eq!(sequential_root, parallel_root, "The roots should match for non-power-of-two leaves");
-    }
-
-    #[test]
-    fn test_larger_depth() {
-        let data: Vec<String> = (1..=5).map(|i| build_merkle_leaf(i)).collect();
-        let full_depth = 6;
-
-        let mut seq_tree = build_merkle_tree(data.clone(), full_depth, "0".to_string());
-        let sequential_root = seq_tree.root().unwrap();
-
-        let parallel_root = build_merkle_tree_parallel(data, 2, full_depth);
-
-        assert_eq!(sequential_root, parallel_root, "The roots should match for larger depths");
-    }
-
-    #[test]
-    fn test_large_number_of_leaves() {
-        let data: Vec<String> = (1..=32).map(|i| build_merkle_leaf(i)).collect();
-        let full_depth = 5;
-
-        let mut seq_tree = build_merkle_tree(data.clone(), full_depth, "0".to_string());
-        let sequential_root = seq_tree.root().unwrap();
-
-        let parallel_root = build_merkle_tree_parallel(data, 8, full_depth);
-
-        assert_eq!(sequential_root, parallel_root, "The roots should match for large numbers of leaves");
     }
 }

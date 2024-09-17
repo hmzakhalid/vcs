@@ -25,6 +25,9 @@ contract EvenNumber {
         verifier.verify(seal, imageId, sha256(journal));
         number = x;
     }
+    function verify(bytes32 journalHash, bytes calldata seal) public view {
+        verifier.verify(seal, imageId, journalHash);
+    }
 
     function emitData(uint256 x, bytes memory data) public {
         emit TestingEvent(x, data);
