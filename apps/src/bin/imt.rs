@@ -1,4 +1,4 @@
-use alloy_primitives::Keccak256;
+use sha3::{Digest, Keccak256};
 use ark_bn254::Fr;
 use ark_ff::{BigInt, BigInteger};
 use hex;
@@ -40,13 +40,11 @@ fn print_imt_nodes(tree: &IMT) {
 }
 
 fn build_merkle_leaf(data: usize) -> String {
-    let mut kek = Keccak256::new();
-    kek.update(&[data as u8]);
-    let hex_data = hex::encode(kek.finalize());
+    let hex_data = hex::encode(Keccak256::digest(&[data as u8]));
     let clean_data = hex_data.trim_start_matches("0x");
     let val = BigUint::from_str_radix(clean_data, 16).unwrap().to_string();
     let data_field = Fr::from_str(&val).unwrap();
-    let pad = Fr::from_str("0").unwrap();
+    let pad = Fr::from_str(&data.to_string()).unwrap();
     let mut pos = Poseidon::<Fr>::new_circom(2).unwrap();
     let hash: BigInt<4> = pos.hash(&[data_field, pad]).unwrap().into();
     hex::encode(hash.to_bytes_be())
@@ -97,22 +95,25 @@ fn build_merkle_tree_parallel(data: Vec<IMTNode>, batch_size: usize, full_depth:
 }
 
 fn main() {
-    let data: Vec<String> = (1..=16).map(|i| build_merkle_leaf(i)).collect();
-    let full_depth = 4;
-
+    let data: Vec<String> = (1..=4).map(|i| build_merkle_leaf(i)).collect();
+    let full_depth = (data.len() as f64).log2().ceil() as usize;
+    println!("Depth: {:?}", full_depth);
     println!("Building Sequential Merkle Tree...");
     let mut seq_tree = build_merkle_tree(data.clone(), full_depth, "0".to_string());
     let sequential_root = seq_tree.root().unwrap();
     println!("Sequential Root: {}", sequential_root);
 
-    println!("Building Parallel Merkle Tree...");
-    // Note: The batch size must be a power of 2
-    let parallel_root = build_merkle_tree_parallel(data, 4, full_depth);
-    println!("Parallel Root: {}", parallel_root);
+    // println!("Building Parallel Merkle Tree...");
+    // // Note: The batch size must be a power of 2
+    // let parallel_root = build_merkle_tree_parallel(data, 4, full_depth);
+    // println!("Parallel Root: {}", parallel_root);
 
-    if sequential_root == parallel_root {
-        println!("The roots match!");
-    } else {
-        println!("The roots do not match.");
-    }
+    // if sequential_root == parallel_root {
+    //     println!("The roots match!");
+    // } else {
+    //     println!("The roots do not match.");
+    // }
 }
+
+// 095d540a93033192a3ab984eb33b3071f2761b8a53b9c0e12fdbda504d1f3d94 // IMT
+// 29c49becb0056d0e3d9e92b7a477da05bdd9b5423dafeeabaabca1e77b6179f7 // Contract

@@ -5,7 +5,7 @@ import {ImageID} from "./ImageID.sol";
 import "imt/BinaryIMT.sol";
 import {PoseidonT3} from "poseidon-solidity/PoseidonT3.sol";
 
-contract EvenNumber {
+contract BinaryMTree {
     using BinaryIMT for BinaryIMTData;
     BinaryIMTData public tree;
 
