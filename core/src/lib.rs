@@ -1,3 +1,6 @@
+use fhe::bfv::{BfvParameters, Ciphertext};
+use fhe_traits::{Deserialize, DeserializeParametrized, Serialize};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ComputationResult {
@@ -50,7 +53,15 @@ impl<C: CiphertextProcessor + serde::ser::Serialize> ComputationInput<C> {
 impl CiphertextProcessor for CiphertextInputs {
     /// Default implementation of the process_ciphertexts method
     fn process_ciphertexts(&self) -> Vec<u8> {
-       vec![1, 2, 3]
+        let params = Arc::new(BfvParameters::try_deserialize(&self.params).unwrap());
+
+        let mut sum = Ciphertext::zero(&params);
+        for ciphertext_bytes in &self.ciphertexts {
+            let ciphertext = Ciphertext::from_bytes(ciphertext_bytes, &params).unwrap();
+            sum += &ciphertext;
+        }
+    
+        sum.to_bytes()
     }
 
     fn get_ciphertexts(&self) -> &[Vec<u8>] {

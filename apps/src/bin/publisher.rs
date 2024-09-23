@@ -12,11 +12,12 @@ use alloy::{
     transports::BoxTransport,
 };
 use alloy_primitives::U256;
-use std::str::FromStr;
 use eyre::Result;
 use num_bigint::BigUint;
+use num_traits::ToBytes;
 use sha3::{Digest, Keccak256};
 use std::env;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
@@ -43,7 +44,8 @@ sol! {
         function verify(bytes32 journalHash, bytes calldata seal) public view;
         function insertLeaf(uint64 id, bytes memory input) public returns (uint256, uint256, uint256);
         function getRoot(uint64 id) public view returns (uint256);
-        function displayTree(uint64 id) public view returns (uint256, uint256);
+        function displayTree(uint64 id) public view returns (uint256, uint256, uint256);
+        function getHash(bytes memory input) public pure returns (bytes32, uint256);
     }
 }
 
@@ -98,80 +100,85 @@ impl CRISPVotingContract {
         Ok(hex::encode(builder._0.to_be_bytes_vec()))
     }
 
-    pub async fn display_tree(&self, id: u64) -> Result<(U256,U256)> {
+    pub async fn display_tree(&self, id: u64) -> Result<(U256, U256, U256)> {
         let contract = CRISPVoting::new(self.contract_address, &self.provider);
         let builder = contract.displayTree(id).call().await?;
+        Ok((builder._0, builder._1, builder._2))
+    }
+
+    pub async fn get_hash(&self, input: Bytes) -> Result<(B256, U256)> {
+        let contract = CRISPVoting::new(self.contract_address, &self.provider);
+        let builder = contract.getHash(input).call().await?;
         Ok((builder._0, builder._1))
     }
 }
 #[tokio::main]
 async fn main() -> Result<()> {
-
     // compute_provider();
 
-    // let (b32, seal) = tokio::task::spawn_blocking(|| {
-    //     let ct: Vec<Vec<u8>> = vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]];
-    //     let params = create_params();
+    let (b32, seal) = tokio::task::spawn_blocking(|| {
+        let ct: Vec<Vec<u8>> = vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]];
+        let params = create_params();
 
-    //     let ciphertexts = CiphertextInputs {
-    //         ciphertexts: ct,
-    //         params: params.to_bytes(),
-    //     };
+        let ciphertexts = CiphertextInputs {
+            ciphertexts: ct,
+            params: params.to_bytes(),
+        };
 
-    //     let compute_input = ComputationInput {
-    //         ciphertexts,
-    //         leaf_hashes: Vec::new(),
-    //         tree_depth: 10,
-    //         zero_node: String::from("0"),
-    //         arity: 2,
-    //     };
+        let compute_input = ComputationInput {
+            ciphertexts,
+            leaf_hashes: Vec::new(),
+            tree_depth: 10,
+            zero_node: String::from("0"),
+            arity: 2,
+        };
 
-    //     let env = ExecutorEnv::builder()
-    //         .write(&compute_input)
-    //         .unwrap()
-    //         .build()
-    //         .unwrap();
+        let env = ExecutorEnv::builder()
+            .write(&compute_input)
+            .unwrap()
+            .build()
+            .unwrap();
 
-    //     let receipt = default_prover()
-    //         .prove_with_ctx(
-    //             env,
-    //             &VerifierContext::default(),
-    //             IS_EVEN_ELF,
-    //             &ProverOpts::groth16(),
-    //         )
-    //         .unwrap()
-    //         .receipt;
+        let receipt = default_prover()
+            .prove_with_ctx(
+                env,
+                &VerifierContext::default(),
+                IS_EVEN_ELF,
+                &ProverOpts::groth16(),
+            )
+            .unwrap()
+            .receipt;
 
-    //     // Encode the seal with the selector
-    //     let seal = Bytes::from(groth16::encode(receipt.inner.groth16().unwrap().seal.clone()).unwrap());
-    //     let journal = receipt.journal.bytes.clone();
-    //     let journal_hash = Sha256::new().chain_update(&journal).finalize();
-    //     let b32 = B256::from_slice(&journal_hash);
+        // Encode the seal with the selector
+        let seal = Bytes::from(groth16::encode(receipt.inner.groth16().unwrap().seal.clone()).unwrap());
+        let journal = receipt.journal.bytes.clone();
+        let journal_hash = Sha256::new().chain_update(&journal).finalize();
+        let b32 = B256::from_slice(&journal_hash);
 
-    //     (b32, seal)
-    // })
-    // .await
-    // .unwrap();
+        (b32, seal)
+    })
+    .await
+    .unwrap();
 
-    // println!("B32: {:?}", b32);
-    // println!("Seal: {:?}", seal);
+    println!("B32: {:?}", b32);
+    println!("Seal: {:?}", seal);
 
-    // Use async for the rest of the code
-    let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY must be set in the environment");
-    let rpc_url = "http://0.0.0.0:8545";
-    let contract = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0";
-    let contract_caller = CRISPVotingContract::new(&rpc_url, &private_key, &contract).await?;
-
-    let data: Vec<Bytes> = (1..=6 as u64).map(|i| Bytes::from(i.to_be_bytes())).collect();
-    for i in 0..data.len() {
-        contract_caller.insert_leaf(3u64, data[i].clone()).await?;
-    }
-    let tx = contract_caller.get_root(3u64).await?;
-    println!("Response: {:?}", tx);
-    let dets = contract_caller.display_tree(3u64).await?;
-    println!("Response: {:?}", dets);
-
-    
+    // // Use async for the rest of the code
+    // let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY must be set in the environment");
+    // let rpc_url = "http://0.0.0.0:8545";
+    // let contract = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0";
+    // let contract_caller = CRISPVotingContract::new(&rpc_url, &private_key, &contract).await?;
+    // let id = 9u64;
+    // let data: Vec<Bytes> = (1..=6 as u64)
+    //     .map(|i| Bytes::from(i.to_be_bytes()))
+    //     .collect();
+    // for i in 0..data.len() {
+    //     contract_caller.insert_leaf(id, data[i].clone()).await?;
+    // }
+    // let tx = contract_caller.get_root(id).await?;
+    // println!("Response: {:?}", tx);
+    // let dets = contract_caller.display_tree(id).await?;
+    // println!("Response: {:?}", dets);
 
     Ok(())
 }
