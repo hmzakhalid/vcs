@@ -748,7 +748,6 @@ dependencies = [
  "sha3",
  "tokio",
  "vcs-core",
- "zk-kit-imt",
 ]
 
 [[package]]
@@ -6031,14 +6030,6 @@ dependencies = [
  "sha1",
  "time",
  "zstd",
-]
-
-[[package]]
-name = "zk-kit-imt"
-version = "0.0.5"
-dependencies = [
- "hex",
- "tiny-keccak",
 ]
 
 [[package]]
