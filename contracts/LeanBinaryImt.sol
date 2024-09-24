@@ -50,7 +50,7 @@ contract LeanBinaryImt {
 
     IRiscZeroVerifier public immutable verifier;
     mapping(uint256 => E3) public e3Polls; // Stores each poll by its e3Id
-    bytes32 public constant imageId = bytes32(0xc59dd727da0f26c05bddb612442e84b9b4a376ad8538d0def3c1eb0d4d627e13);
+    bytes32 public constant imageId = bytes32(0x189431209c3cdced4e8a848df6eb641ca7e1a07ebefa434b29017cbfcfd5cb84);
     uint256 public number;
 
     constructor(IRiscZeroVerifier _verifier) {
@@ -170,43 +170,24 @@ contract LeanBinaryImt {
     // Publish ciphertext output
     function publishCiphertextOutput(
         uint256 e3Id,
-        bytes calldata data,
-        bytes memory seal
+        bytes memory ciphertextOutput,
+        bytes memory proof
     ) external returns (bool success) {
-        verifier.verify(seal, imageId, sha256(data));
-
-        emit CiphertextOutputPublished(e3Id, data);
-        return true;
-
-        
-        bytes32 ciphertextOutputHash = keccak256(data);
+        bytes32 ciphertextOutputHash = keccak256(ciphertextOutput);
         bytes32 paramshash = keccak256(e3Params[e3Id]);
-        uint256 inputRoot = getRoot(e3Id);
+        bytes32 inputRoot = bytes32(getRoot(e3Id));
 
-        bytes memory journal = abi.encode(
-            ciphertextOutputHash,
-            paramshash,
-            inputRoot
-        );
+        bytes memory journal = new bytes(396); // (32 + 1) * 4 * 3
 
-
-        // e3Polls[e3Id].ciphertextOutput = ciphertextOutputHash;
+        encodeLengthPrefixAndHash(journal, 0, ciphertextOutputHash);
+        encodeLengthPrefixAndHash(journal, 132, paramshash);
+        encodeLengthPrefixAndHash(journal, 264, inputRoot);
         
-    }
-    function testVerify(
-        bytes32 ciphertextOutputHash,
-        bytes32 paramshash,
-        bytes32 inputRoot,
-        bytes memory seal,
-        bytes32 data
-    ) external returns (bool success) {
-        // bytes memory journal = abi.encodePacked(
-        //     ciphertextOutputHash,
-        //     paramshash,
-        //     inputRoot
-        // );
 
-        verifier.verify(seal, imageId, data);
+        verifier.verify(proof, imageId, sha256(journal));
+        
+        e3Polls[e3Id].ciphertextOutput = ciphertextOutputHash;
+        emit CiphertextOutputPublished(e3Id, ciphertextOutput);
         return true;
     }
 
