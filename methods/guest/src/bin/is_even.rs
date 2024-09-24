@@ -1,11 +1,11 @@
 use risc0_zkvm::guest::env;
-use vcs_core::{ComputationInput, CiphertextInputs, ComputationResult};
+use vcs_core::{ComputeInput, ComputeResult, fhe_processor};
 
 
 fn main() {
-    let input: ComputationInput<CiphertextInputs> = env::read();
+    let input: ComputeInput = env::read();
     
-    let result: ComputationResult = input.process();
+    let result: ComputeResult = input.process(fhe_processor);
 
     env::commit(&result);
 }

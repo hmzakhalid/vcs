@@ -50,7 +50,7 @@ contract LeanBinaryImt {
 
     IRiscZeroVerifier public immutable verifier;
     mapping(uint256 => E3) public e3Polls; // Stores each poll by its e3Id
-    bytes32 public constant imageId = bytes32(0x189431209c3cdced4e8a848df6eb641ca7e1a07ebefa434b29017cbfcfd5cb84);
+    bytes32 public constant imageId = bytes32(0xc59dd727da0f26c05bddb612442e84b9b4a376ad8538d0def3c1eb0d4d627e13);
     uint256 public number;
 
     constructor(IRiscZeroVerifier _verifier) {
@@ -70,12 +70,31 @@ contract LeanBinaryImt {
         return InternalLeanIMT._root(inputs[id]);
     }
 
-    function verifyHash(bytes memory input) public pure returns (bytes32) {
-        return keccak256(input);
+    function verifyFields(
+        bytes32 ctHash,
+        bytes32 paramHash,
+        bytes32 rootHash,
+        bytes calldata seal
+    ) public {
+        bytes memory journal = new bytes(396); // (32 + 1) * 4 * 3
+
+        encodeLengthPrefixAndHash(journal, 0, ctHash);
+        encodeLengthPrefixAndHash(journal, 132, paramHash);
+        encodeLengthPrefixAndHash(journal, 264, rootHash);
+
+        verifier.verify(seal, imageId, sha256(journal));
     }
 
-    function verify(bytes32 journalHash, bytes calldata seal) public view {
-        verifier.verify(seal, imageId, journalHash);
+    function encodeLengthPrefixAndHash(bytes memory journal, uint256 startIndex, bytes32 hashVal) internal pure {
+        journal[startIndex] = 0x20; // 32 in hex
+        startIndex += 4;
+        for (uint256 i = 0; i < 32; i++) {
+            journal[startIndex + i * 4] = hashVal[i];
+        }
+    }
+
+    function verify(bytes memory journal, bytes calldata seal) public {
+        verifier.verify(seal, imageId, sha256(journal));
     }
 
     // Request a new E3 computation

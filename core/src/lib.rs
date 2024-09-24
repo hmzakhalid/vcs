@@ -1,74 +1,62 @@
+pub mod merkle_tree;
 use fhe::bfv::{BfvParameters, Ciphertext};
 use fhe_traits::{Deserialize, DeserializeParametrized, Serialize};
 use std::sync::Arc;
+use merkle_tree::MerkleTree;
+use sha3::{Digest, Keccak256};
+
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ComputationResult {
-    pub ciphertext: Vec<u8>,
-    pub merkle_root: String,
+pub struct ComputeResult {
+    pub ciphertext_hash: Vec<u8>,
+    pub params_hash: Vec<u8>,
+    pub merkle_root: Vec<u8>,
 }
 
+pub type FHEProcessor = fn(&FHEInputs) -> Vec<u8>;
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct CiphertextInputs {
-    pub ciphertexts: Vec<Vec<u8>>,
+pub struct FHEInputs {
+    pub ciphertexts: Vec<(Vec<u8>, u64)>,
     pub params: Vec<u8>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ComputationInput<C: CiphertextProcessor + serde::ser::Serialize> {
-    pub ciphertexts: C,
+pub struct ComputeInput {
+    pub fhe_inputs: FHEInputs,
     pub leaf_hashes: Vec<String>,
-    pub tree_depth: usize,
-    pub zero_node: String,
-    pub arity: usize,
 }
 
-pub trait CiphertextProcessor {
-    fn process_ciphertexts(&self) -> Vec<u8>;
+impl ComputeInput {
+    pub fn process(&self, fhe_processor: FHEProcessor) -> ComputeResult {
+        let processed_ciphertext = (fhe_processor)(&self.fhe_inputs);
+        let processed_hash = Keccak256::digest(&processed_ciphertext).to_vec();
+        let params_hash = Keccak256::digest(&self.fhe_inputs.params).to_vec();
 
-    fn get_ciphertexts(&self) -> &[Vec<u8>];
+        let merkle_root = MerkleTree {
+            leaf_hashes: self.leaf_hashes.clone(),
+        }
+        .build_tree()
+        .root()
+        .unwrap();
 
-    fn get_params(&self) -> &[u8];
-}
-
-impl<C: CiphertextProcessor + serde::ser::Serialize> ComputationInput<C> {
-    pub fn process(&self) -> ComputationResult {
-        let processed_ciphertext = self.ciphertexts.process_ciphertexts();
-
-        ComputationResult {
-            ciphertext: processed_ciphertext,
-            merkle_root: "0xdeadbeef".to_string(),
+        ComputeResult {
+            ciphertext_hash: processed_hash,
+            params_hash,
+            merkle_root: hex::decode(merkle_root).unwrap(),
         }
     }
-
-    pub fn get_ciphertexts(&self) -> &[Vec<u8>] {
-        self.ciphertexts.get_ciphertexts()
-    }
-
-    pub fn get_params(&self) -> &[u8] {
-        self.ciphertexts.get_params()
-    }
 }
 
-impl CiphertextProcessor for CiphertextInputs {
-    /// Default implementation of the process_ciphertexts method
-    fn process_ciphertexts(&self) -> Vec<u8> {
-        let params = Arc::new(BfvParameters::try_deserialize(&self.params).unwrap());
 
-        let mut sum = Ciphertext::zero(&params);
-        for ciphertext_bytes in &self.ciphertexts {
-            let ciphertext = Ciphertext::from_bytes(ciphertext_bytes, &params).unwrap();
-            sum += &ciphertext;
-        }
-    
-        sum.to_bytes()
+pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
+    let params = Arc::new(BfvParameters::try_deserialize(&fhe_inputs.params).unwrap());
+
+    let mut sum = Ciphertext::zero(&params);
+    for ciphertext_bytes in &fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, &params).unwrap();
+        sum += &ciphertext;
     }
 
-    fn get_ciphertexts(&self) -> &[Vec<u8>] {
-        &self.ciphertexts
-    }
-
-    fn get_params(&self) -> &[u8] {
-        &self.params
-    }
+    sum.to_bytes()
 }
